@@ -16,7 +16,11 @@
  *    GH_TOKEN  GitHub classic PAT，不勾任何 scope 即可
  * ============================================================ */
 
-const CACHE_TTL = 21600;          // 6 小时
+import { CAVEAT_WOFF2, CAVEAT_TTF } from './font.js';
+
+const CACHE_TTL = 21600;
+// 改了渲染逻辑就加一，强制边缘重新生成（Cache API 的 key 会带上它）
+const BUILD = 'v3';          // 6 小时
 const GQL = 'https://api.github.com/graphql';
 
 const THEMES = {
@@ -24,6 +28,9 @@ const THEMES = {
            accent: '#58a6ff', extra: '#3fb950' },
   light: { bg: '#ffffff', border: '#d0d7de', title: '#24292f', text: '#57606a',
            accent: '#0969da', extra: '#1a7f37' },
+  // 浅粉手写风（参考主题）
+  pink:  { bg: '#ffffff', border: '#f3d6e0', title: '#f06292', text: '#ec6a8c',
+           accent: '#f48fb1', extra: '#f8bbd0', track: '#fde8f0', script: true },
 };
 
 const HIDE_ALIAS = {
@@ -128,67 +135,137 @@ function summarize(user) {
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+const SCRIPT_STACK = `'Caveat','Segoe Script','Bradley Hand','Comic Sans MS',cursive`;
+const SANS_STACK = `-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif`;
+
+function fontFace() {
+  return `<style>@font-face{font-family:'Caveat';src:url(data:font/woff2;base64,${CAVEAT_WOFF2}) format('woff2'),url(data:font/ttf;base64,${CAVEAT_TTF}) format('truetype');}` +
+    `.sc{font-family:${SCRIPT_STACK}}.sx{font-family:${SANS_STACK}}</style>`;
+}
+
 function frame(w, h, theme, body) {
-  const t = THEMES[theme] || THEMES.dark;
+  // 允许传主题名或已解析的主题对象（后者能带上 script/覆盖色）
+  const t = typeof theme === 'string' ? (THEMES[theme] || THEMES.dark) : theme;
   return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"
   xmlns="http://www.w3.org/2000/svg" role="img">
-  <rect width="${w}" height="${h}" rx="8" fill="${t.bg}" stroke="${t.border}"/>
+  ${t.script ? fontFace() : ''}
+  <rect width="${w}" height="${h}" rx="10" fill="${t.bg}" stroke="${t.border}"/>
   ${body}
 </svg>`;
 }
 
+/* ---------- 评级：把各项活动折算成一个等级（参考 github-readme-stats 的思路） ---------- */
+function rankOf(s) {
+  const commits = Math.max(1, s.commits);
+  const score =
+    Math.log(commits) * 12 +
+    Math.log(1 + s.prs) * 18 +
+    Math.log(1 + s.issues) * 14 +
+    Math.log(1 + s.stars + s.forks) * 16 +
+    Math.log(1 + s.followers) * 10;
+  const table = [
+    [135, 'A++', 100], [125, 'A+', 92], [115, 'A', 84], [105, 'A-', 76],
+    [95, 'B+', 68], [85, 'B', 60], [75, 'B-', 52], [65, 'C+', 44],
+    [55, 'C', 36], [45, 'C-', 28], [35, 'D+', 20], [0, 'D', 12],
+  ];
+  for (const [min, grade, pct] of table) if (score >= min) return { grade, pct };
+  return { grade: 'D', pct: 12 };
+}
+
+const ICONS = {
+  star: '<path d="M8 1.6l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.4 4.2 13.4l.7-4.3-3.1-3 4.3-.6z"/>',
+  clock: '<circle cx="8" cy="8" r="6.2" fill="none" stroke-width="1.6"/><path d="M8 4.4V8l2.6 1.7" fill="none" stroke-width="1.6"/>',
+  branch: '<circle cx="4.4" cy="4" r="1.9"/><circle cx="4.4" cy="12" r="1.9"/><circle cx="11.6" cy="6.4" r="1.9"/><path d="M4.4 5.9v4.2M6.3 6.4h2.2a1.2 1.2 0 0 1 1.2 1.2v0" fill="none" stroke-width="1.4"/>',
+  issue: '<circle cx="8" cy="8" r="6.2" fill="none" stroke-width="1.6"/><path d="M8 4.6v4.2" stroke-width="1.8" fill="none"/><circle cx="8" cy="11.3" r="1"/>',
+  repo: '<rect x="2.4" y="3" width="11.2" height="10" rx="1.6" fill="none" stroke-width="1.5"/><path d="M2.4 6h11.2" stroke-width="1.3"/>',
+};
+
+function icon(kind, x, y, color) {
+  return `<g transform="translate(${x},${y})" fill="${color}" stroke="${color}">${ICONS[kind]}</g>`;
+}
+
 function statsSvg(s, theme, opts) {
-  const t = THEMES[theme] || THEMES.dark;
-  const items = [
-    ['总 Star', s.stars], ['仓库', s.repos],
-    ['提交(一年)', s.commits], ['PR(一年)', s.prs],
-    ['Issue(一年)', s.issues], ['关注者', s.followers],
-  ].filter(([k]) => {
+  const t = { ...(THEMES[theme] || THEMES.dark) };
+  const script = t.script || opts.font === 'script';
+  if (script && !t.script) {
+    // 暗色 + 手写体：换成粉色系，否则手写体配灰白很怪
+    t.title = '#f48fb1'; t.text = '#f8bbd0'; t.accent = '#f06292';
+    t.track = '#30363d'; t.border = '#30363d';
+  }
+  if (script) t.script = true;   // 让 frame() 把 @font-face 打进去
+  const rows = [
+    ['star', 'Total Stars', s.stars],
+    ['clock', 'Total Commits', s.commits >= 1000 ? (s.commits / 1000).toFixed(0) + 'k' : s.commits],
+    ['branch', 'Total PRs', s.prs],
+    ['issue', 'Total Issues', s.issues],
+    ['repo', 'Contributed to', s.repos],
+  ].filter(([, label]) => {
     const hide = (opts.hide || []).map((h) => HIDE_ALIAS[String(h).toLowerCase()] || h);
-    return !hide.includes(k);
+    return !hide.some((h) => label.toLowerCase().includes(String(h).toLowerCase()));
   });
 
-  const rows = Math.ceil(items.length / 2);
-  const h = 70 + rows * 34;
-  const cells = items.map(([label, value], i) => {
-    const cx = 30 + (i % 2) * 195;
-    const cy = 66 + Math.floor(i / 2) * 34;
-    return `<text x="${cx}" y="${cy}" fill="${t.accent}" font-size="17" font-weight="700">${value}</text>
-  <text x="${cx + 52}" y="${cy}" fill="${t.text}" font-size="12">${esc(label)}</text>`;
+  const rank = rankOf(s);
+  const W = 460;
+  const H = 78 + rows.length * 34;
+  const ringX = W - 74, ringY = H / 2 + 6, r = 40;
+  const dash = 2 * Math.PI * r;
+
+  const list = rows.map(([kind, label, value], i) => {
+    const y = 62 + i * 34;
+    return `${icon(kind, 26, y - 13, t.accent)}
+  <text x="52" y="${y}" class="${script ? 'sc' : 'sx'}" fill="${t.title}" font-size="${script ? 19 : 13}" font-weight="${script ? 400 : 500}">${esc(label)}</text>
+  <text x="232" y="${y}" class="${script ? 'sc' : 'sx'}" fill="${t.text}" font-size="${script ? 19 : 13}" font-weight="${script ? 400 : 500}">${value}</text>`;
   }).join('\n  ');
 
-  return frame(400, h, theme, `
-  <text x="24" y="32" fill="${t.title}" font-size="15" font-weight="700">${esc(s.name)}</text>
-  <text x="24" y="48" fill="${t.text}" font-size="11">@${esc(s.login)}</text>
-  ${cells}`);
+  return frame(W, H, t, `
+  <text x="26" y="34" class="${script ? 'sc' : 'sx'}" fill="${t.title}" font-size="${script ? 23 : 15}" font-weight="${script ? 400 : 700}">My GitHub Statistics</text>
+  ${list}
+  <circle cx="${ringX}" cy="${ringY}" r="${r}" fill="none" stroke="${t.track || '#fde8f0'}" stroke-width="9"/>
+  <circle cx="${ringX}" cy="${ringY}" r="${r}" fill="none" stroke="${t.accent}" stroke-width="9"
+          stroke-linecap="round" stroke-dasharray="${(dash * rank.pct) / 100} ${dash}"
+          transform="rotate(-90 ${ringX} ${ringY})"/>
+  <text x="${ringX}" y="${ringY + 8}" text-anchor="middle" class="${script ? 'sc' : 'sx'}"
+        fill="${t.title}" font-size="${script ? 23 : 16}" font-weight="700">${rank.grade}</text>`);
 }
 
 function langsSvg(s, theme, opts) {
-  const t = THEMES[theme] || THEMES.dark;
-  const count = Math.max(1, Math.min(opts.langs_count || 6, 12));
+  const t = { ...(THEMES[theme] || THEMES.dark) };
+  const script = t.script || opts.font === 'script';
+  if (script && !t.script) {
+    // 暗色 + 手写体：换成粉色系，否则手写体配灰白很怪
+    t.title = '#f48fb1'; t.text = '#f8bbd0'; t.accent = '#f06292';
+    t.track = '#30363d'; t.border = '#30363d';
+  }
+  if (script) t.script = true;   // 让 frame() 把 @font-face 打进去
+  const count = Math.max(1, Math.min(opts.langs_count || 9, 12));
   const langs = s.langs.slice(0, count);
-  const h = 60 + Math.ceil(count / 2) * 30 + 24;
-  const barW = 352;
+  const W = 460;
+  const cols = 2;
+  const rowH = 32;
+  const legendTop = 108;
+  const H = legendTop + Math.ceil(langs.length / cols) * rowH + 16;
+  const barW = W - 52;
 
   let offset = 0;
   const segs = langs.map((l) => {
     const w = Math.max(2, (l.pct / 100) * barW);
-    const seg = `<rect x="${24 + offset}" y="58" width="${w}" height="8" rx="4"
+    const seg = `<rect x="${26 + offset}" y="68" width="${w}" height="9" rx="4.5"
     fill="${LANG_COLORS[l.name] || '#8b949e'}"/>`;
     offset += w;
     return seg;
   }).join('\n  ');
 
   const legend = langs.map((l, i) => {
-    const cx = 24 + (i % 2) * 180;
-    const cy = 88 + Math.floor(i / 2) * 30;
-    return `<circle cx="${cx + 5}" cy="${cy - 4}" r="5" fill="${LANG_COLORS[l.name] || '#8b949e'}"/>
-  <text x="${cx + 16}" y="${cy}" fill="${t.title}" font-size="12">${esc(l.name)}</text>
-  <text x="${cx + 118}" y="${cy}" fill="${t.text}" font-size="12">${l.pct.toFixed(1)}%</text>`;
+    const cx = 24 + (i % cols) * 226;
+    const cy = legendTop + Math.floor(i / cols) * rowH;
+    const label = `${l.name} (${l.pct.toFixed(2)}%)`;
+    return `<circle cx="${cx + 6}" cy="${cy - 3}" r="5.5" fill="${LANG_COLORS[l.name] || '#8b949e'}"/>
+  <text x="${cx + 20}" y="${cy + 2}" class="${script ? 'sc' : 'sx'}" fill="${t.title}"
+        font-size="${script ? 17 : 12}" font-weight="${script ? 400 : 500}">${esc(label)}</text>`;
   }).join('\n  ');
 
-  return frame(400, h, theme, `
-  <text x="24" y="32" fill="${t.title}" font-size="14" font-weight="700">Most Used Languages</text>
+  return frame(W, H, t, `
+  <text x="26" y="40" class="${script ? 'sc' : 'sx'}" fill="${t.title}" font-size="${script ? 23 : 14}" font-weight="${script ? 400 : 700}">My Programming Languages</text>
   ${segs}
   ${legend}`);
 }
@@ -218,10 +295,12 @@ export default {
 
     const username = (url.searchParams.get('username') || '').trim();
     const type = (url.searchParams.get('type') || 'stats').trim();
-    const theme = url.searchParams.get('theme') === 'light' ? 'light' : 'dark';
+    const themeParam = (url.searchParams.get('theme') || '').toLowerCase();
+    const theme = themeParam in THEMES ? themeParam : 'dark';
     const opts = {
       langs_count: Number(url.searchParams.get('langs_count') || 6),
       hide: (url.searchParams.get('hide') || '').split(',').filter(Boolean),
+      font: (url.searchParams.get('font') || '').toLowerCase(),
     };
 
     const svgHeaders = {
@@ -237,7 +316,7 @@ export default {
     }
 
     // 用 Cache API 缓存整个 SVG，省 GitHub 配额
-    const cacheKey = new Request(url.toString(), { method: 'GET' });
+    const cacheKey = new Request(`${url.toString()}&__build=${BUILD}`, { method: 'GET' });
     const cache = caches.default;
     const hit = await cache.match(cacheKey);
     if (hit) return hit;
