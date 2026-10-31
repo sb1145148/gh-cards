@@ -1,0 +1,18 @@
+# gh-cards —— 自己托管的 GitHub 卡片
+#
+# 部署：
+#   CLOUDFLARE_API_TOKEN=... npx wrangler deploy
+# 设置 token（只需做一次）：
+#   npx wrangler secret put GH_TOKEN
+name = "gh-cards"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+[observability]
+enabled = true
+
+# 想要自定义域名时，先把 cards.sb1145148.dpdns.org 这个子域在 Cloudflare 里建好，
+# 再把下面的注释打开：
+# routes = [
+#   { pattern = "cards.sb1145148.dpdns.org", custom_domain = true }
+# ]
