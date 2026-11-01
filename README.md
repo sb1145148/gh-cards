@@ -5,9 +5,25 @@
 **为什么要有这个**：公共实例是所有用户共用一份配额，随时会被限流，结果就是 README 里出现破图。用自己的 Worker + 自己的 token，配额独立；而且**出错时返回的是一张写着错误原因的图，不是破图**。
 
 <p align="center">
-  <img src="docs/card-stats.png" width="420" alt="stats">
-  <img src="docs/card-langs.png" width="420" alt="langs">
+  <img src="docs/card-stats.png" width="420" alt="统计卡（theme=pink）">
+  <img src="docs/card-langs.png" width="420" alt="语言卡（theme=pink）">
 </p>
+
+<p align="center">
+  <img src="docs/card-dark.png" width="420" alt="统计卡（theme=dark&amp;font=script）">
+</p>
+
+**上面三张是真实渲染结果**（数据来自 `api.github.com`，2026-11-01）：
+
+| 图 | 参数 | 字体 | 说明 |
+| --- | --- | --- | --- |
+| card-stats.png | `type=stats&theme=pink` | **Caveat 手写体**（内嵌） | 浅粉底，图标行 + 评级圆环 |
+| card-langs.png | `type=langs&theme=pink&langs_count=9` | 同上 | 两列图例，`语言 (百分比)` |
+| card-dark.png | `type=stats&theme=dark&font=script` | 同上 | 深色底 + 粉色文字，给暗色页面用 |
+
+> 字体是内嵌在 SVG 里的 **Caveat**（Google Fonts，SIL OFL 1.1），只保留用到的字符：
+> woff2 12 KB + ttf 21 KB，所以**每张卡约 45 KB**。
+> 如果某个客户端不认内嵌字体，会退回 `cursive` / 系统字体，排版不变。
 
 （上面两张是用本仓库代码 + 模拟数据渲染出来的实际输出）
 
@@ -46,7 +62,9 @@ https://cards.sb1145148.dpdns.org/api?username=你的名字&type=langs
 | `type` | `stats` 或 `langs` | `stats` |
 | `theme` | `dark` / `light` | `dark` |
 | `langs_count` | 语言卡显示几种（1–12） | 6 |
-| `hide` | stats 卡要隐藏的项，逗号分隔（`总 Star`/`仓库`/`提交(一年)`/`PR(一年)`/`Issue(一年)`/`关注者`） | 无 |
+| `hide` | 隐藏 stats 卡某些行，英文别名：`star`/`repos`/`commits`/`prs`/`issues`/`followers` | 无 |
+| `font` | `script` = 手写体（深浅色都可用） | 随主题 |
+| `v` | 任意字符串，用来绕开 6 小时缓存 | 无 |
 
 ---
 
@@ -238,6 +256,21 @@ https://cards.sb1145148.dpdns.org/api?username=sb1145148&type=stats
 
 ---
 
+## 9.5 数据口径（卡片上的数字怎么来的）
+
+| 卡片上的项 | 来源 | 说明 |
+| --- | --- | --- |
+| 总 Star | GraphQL `repositories.nodes.stargazerCount` 求和 | 只算**非 fork** 的、你拥有的仓库（前 100 个） |
+| 仓库 | `repositories.totalCount` | 非 fork |
+| 提交 / PR / Issue | `contributionsCollection` | **最近一年**的贡献，不是历史总量 |
+| 关注者 | `followers.totalCount` | — |
+| 评级 `A / A++ …` | 上面的数加权求和（对数加权） | 阈值见 `src/indexOf` 的 `rankOf` |
+| 语言百分比 | 各仓库 `languages` 的字节数占比 | 同一仓库内同语言去重，再跨仓库累加 |
+
+**缓存**：边缘 6 小时（`BUILD` 变了会强制重算），浏览器 1 小时。想立刻刷新加 `&v=随便什么`。
+
+---
+
 ## 10. 成本与额度
 
 | 项 | 额度 | 说明 |
@@ -266,3 +299,26 @@ https://cards.sb1145148.dpdns.org/api?username=sb1145148&type=stats
 - 最近提交 / 最近 Release 列表
 - 贡献热力图（需要拉 contributions calendar）
 - 把站点文章 API 也做一张卡（`api.sb1145148.dpdns.org/api/articles`，一天一次足够）
+
+---
+
+## 授权
+
+- **代码**：MIT（见 `LICENSE`）
+- **内嵌字体**：Caveat，SIL Open Font License 1.1（见 `LICENSE-Caveat-OFL.txt`）
+  只做了子集化（保留卡片用到的字符），未修改字形，符合 OFL 要求
+
+### 这个仓库里有什么 / 没有什么
+
+| 有 | 说明 |
+| --- | --- |
+| Worker 源码 | 一个文件，无依赖 |
+| 内嵌字体（base64） | 44 KB，OFL 授权 |
+| 卡片预览图 | 实际渲染输出 |
+
+| 没有（也不该有） | 说明 |
+| --- | --- |
+| GitHub token | 只存在于 Cloudflare 的 secret `GH_TOKEN`，不进仓库 |
+| Cloudflare token | 同上，只给 wrangler 用 |
+| 账号 ID / 邮箱 | 没有任何账号级信息 |
+| 本机路径 | 文档里只出现 `/sdcard/Download` 这种通用示例 |
