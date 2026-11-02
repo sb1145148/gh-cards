@@ -268,6 +268,70 @@ https://cards.sb1145148.dpdns.org/api?username=sb1145148&type=stats
 | 语言百分比 | 各仓库 `languages` 的字节数占比 | 同一仓库内同语言去重，再跨仓库累加 |
 
 **缓存**：边缘 6 小时（`BUILD` 变了会强制重算），浏览器 1 小时。想立刻刷新加 `&v=随便什么`。
+---
+
+## 9.6 用哪种令牌（以及为什么要 fine-grained）
+
+`GH_TOKEN` 里放什么令牌**不看前缀**，Worker 只是把它塞进请求头：
+
+```js
+headers: { Authorization: `bearer ${env.GH_TOKEN}` }
+```
+
+所以 `ghp_` / `github_pat_` / `gho_` 都行，**唯一的条件是「这个令牌能看见你要统计的仓库」**。
+
+| 类型 | 读私有仓库需要的权限 | 适合当 Worker secret 吗 |
+| --- | --- | --- |
+| **Classic PAT**（`ghp_`） | 勾 `repo` | ✅ 能跑，但权限过大（可读写你的所有仓库） |
+| **Fine-grained**（`github_pat_`） | `Contents: Read` + `Metadata: Read`，Repository access 选 "All repositories" 或明确勾选 | ✅ **推荐**，权限最小 |
+| GitHub App 令牌（`ghs_` / `ghu_`） | 安装时给 `Contents: Read` | ❌ **不适合**：1 小时过期，secret 没法自动续期 |
+| OAuth（`gh auth login` 产生的 `gho_`） | 跟授权 scope 走 | ⚠️ 可以，但同样会过期 |
+
+### 推荐配置（90 天，只读）
+
+```
+Token name:        gh-cards
+Expiration:        90 days
+Repository access: All repositories
+Permissions:
+  Contents → Read-only
+  Metadata → Read-only
+```
+
+### 三个容易踩的坑
+
+**① 私有仓库读不到时，GitHub 返回 404 而不是 403**
+
+它故意把「无权访问」伪装成「不存在」，避免泄露仓库是否存在。
+
+```
+/repos/owner/public-repo    → 200
+/repos/owner/private-repo   → 404   ← 权限问题，不是拼写问题
+```
+
+**② 换了 token，卡片数字没变**
+
+两种可能，按顺序排查：
+
+1. **6 小时缓存**：`BUILD` 或 URL 里的 `v=` 没变 → 拿到的是旧图，加 `&v=2` 试试
+2. **新 token 没有私有仓库权限**：`repositories(ownerAffiliations: OWNER)` 只返回它看得见的仓库，**看不见的不会报错，只会静默少掉**
+
+**③ 提交数只统计「令牌看得见的仓库」**
+
+`contributionsCollection` 的 `totalCommitContributions` 也是按权限算的。想让私有仓库的提交出现在卡片上，token 必须有那些仓库的读权限。
+
+### 验证令牌权限（不用装工具）
+
+```bash
+# 1) 能读到哪个用户
+curl -s -H "Authorization: Bearer $TOKEN" https://api.github.com/user | jq -r .login
+
+# 2) 能否读某个私有仓库
+curl -s -o /dev/null -w '%{http_code}\n' \
+  -H "Authorization: Bearer $TOKEN" \
+  https://api.github.com/repos/<owner>/<private-repo>
+# 200 = 有权限    404 = 没权限（不是不存在）
+```
 
 ---
 
