@@ -335,6 +335,52 @@ curl -s -o /dev/null -w '%{http_code}\n' \
 
 ---
 
+## 9.7 Cloudflare 令牌需要什么权限
+
+部署这个 Worker 用到的 Cloudflare API Token，**只勾下面这几条就够**：
+
+| 操作 | 需要的权限 | 少了会怎样 |
+| --- | --- | --- |
+| `wrangler deploy`（上传脚本） | Account → **Workers Scripts → Edit** | `Authentication error [code: 10000]` |
+| `wrangler secret put`（写 GH_TOKEN） | 同上（secret 属于脚本） | 同上 |
+| 绑定自定义域名（`cards.example.com`） | 上面那条 **+ Zone → Workers Routes → Edit**（某些账号还要 **Zone → DNS → Edit**） | 部署成功但域名 404 / 证书一直「待签发」 |
+| `wrangler whoami` / 列账号 | Account → **Account Settings → Read** | 能部署，但会警告 `Unable to get membership roles` |
+| `wrangler tail`（看实时日志） | Account → **Workers Scripts → Read** | 看不了日志，不影响部署 |
+
+### 不需要的权限
+
+| 权限 | 为什么不需要 |
+| --- | --- |
+| **D1 → Edit** | 这个 Worker 只读 GitHub，不碰数据库 |
+| **Cloudflare Pages → Edit** | 那是站点仓库（profile-site）的事，和这个 Worker 无关 |
+| **Zone → Edit（全量）** | 只有绑自定义域名时才需要那条 Routes/DNS，别给整块 |
+
+### 两个常被混淆的错误
+
+**① `Authentication error [code: 10000]`**
+
+不是网络问题，也不是账号问题 —— **就是令牌少了某条权限**。Cloudflare 不会告诉你是哪条，只能对照上表逐条排。
+
+**② `Unable to get membership roles`**
+
+只是警告，**部署照样成功**。它想读「你在账号里的角色」，需要 `Account Settings → Read`；不给也能用。
+
+### 验证清单（建完令牌先跑这几条）
+
+```bash
+# 能列脚本 = Workers 读权限 OK
+curl -s -H "Authorization: Bearer $CF_TOKEN" \
+  "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/workers/scripts" | jq '.success'
+
+# 能列账号 = Account Settings 读权限 OK
+curl -s -H "Authorization: Bearer $CF_TOKEN" \
+  "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID" | jq '.success'
+```
+
+两条都返回 `true`，`wrangler deploy` 就不会再卡在权限上。
+
+---
+
 ## 10. 成本与额度
 
 | 项 | 额度 | 说明 |
