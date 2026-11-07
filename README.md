@@ -415,8 +415,7 @@ curl -s -H "Authorization: Bearer $CF_TOKEN" \
 ## 授权
 
 - **代码**：MIT（见 [`LICENSE`](LICENSE)）
-- **内嵌字体**：Caveat，SIL Open Font License 1.1（见 [`third-party/Caveat-OFL-1.1.txt`](third-party/Caveat-OFL-1.1.txt)）
-  只做了子集化（保留卡片用到的字符），未修改字形，符合 OFL 要求
+- **内嵌字体**：Caveat，SIL OFL 1.1（见 [`third-party/Caveat-OFL-1.1.txt`](third-party/Caveat-OFL-1.1.txt)）。只做了子集化（保留卡片用到的字符），未修改字形，符合 OFL 要求
 - **第三方素材清单**：[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)
 
 ### 这个仓库里有什么 / 没有什么
